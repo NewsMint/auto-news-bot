@@ -7,3 +7,4 @@ beautifulsoup4
 pillow
 opencv-python-headless
 python-dotenv
+google-generativeai
