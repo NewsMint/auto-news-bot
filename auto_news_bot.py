@@ -1,19 +1,22 @@
 print("✅ Script started running with Google Gemini")
 
 import os
+import hashlib
 import requests
 import html
 import cv2
 import numpy as np
+import pickle
 from bs4 import BeautifulSoup
 from PIL import Image
 from io import BytesIO
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
-from google.oauth2.credentials import Credentials
+from google.auth.transport.requests import Request
+from google_auth_oauthlib.flow import InstalledAppFlow
 import google.generativeai as genai
-
-HEADERS = {'User-Agent': 'Mozilla/5.0'}
+from dotenv import load_dotenv
+load_dotenv()
 
 # ✅ Load Gemini API Key
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
@@ -23,17 +26,36 @@ if not GEMINI_API_KEY:
 
 genai.configure(api_key=GEMINI_API_KEY)
 
-# ✅ Get Blogger service using OAuth2 credentials from GitHub secrets
+HEADERS = {
+    'User-Agent': 'Mozilla/5.0'
+}
+
+posted_hashes = set()  # To track duplicate posts
+
+
+def hash_text(text):
+    return hashlib.md5(text.encode()).hexdigest()
+
+
 def get_blogger_service():
-    creds = Credentials.from_authorized_user_info(
-        info={
-            "client_id": os.environ["BLOGGER_CLIENT_ID"],
-            "client_secret": os.environ["BLOGGER_CLIENT_SECRET"],
-            "refresh_token": os.environ["BLOGGER_REFRESH_TOKEN"],
-            "token_uri": "https://oauth2.googleapis.com/token"
-        }
-    )
-    return build("blogger", "v3", credentials=creds)
+    creds = None
+    if os.path.exists('token.pickle'):
+        with open('token.pickle', 'rb') as token:
+            creds = pickle.load(token)
+
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        else:
+            flow = InstalledAppFlow.from_client_secrets_file(
+                'client_secret.json', ['https://www.googleapis.com/auth/blogger']
+            )
+            creds = flow.run_local_server(port=0)
+        with open('token.pickle', 'wb') as token:
+            pickle.dump(creds, token)
+
+    return build('blogger', 'v3', credentials=creds)
+
 
 def remove_watermark_from_url(image_url):
     try:
@@ -52,6 +74,7 @@ def remove_watermark_from_url(image_url):
         print("❌ Watermark removal failed:", e)
         return None
 
+
 def fetch_articles(url, limit=5):
     print(f"🌐 Fetching articles from {url}")
     try:
@@ -61,10 +84,8 @@ def fetch_articles(url, limit=5):
 
         if "kannadanewsnow.com" in url:
             links = soup.select("div.jeg_postblock_content a")
-        elif "kannadadunia.com" in url:
-            links = soup.select("h2.entry-title a")
         else:
-            links = []
+            links = soup.select("h2.entry-title a")
 
         for link in links:
             href = link.get("href")
@@ -77,29 +98,28 @@ def fetch_articles(url, limit=5):
         print("❌ Fetch failed:", e)
         return []
 
+
 def extract_article_content(url):
     print(f"📄 Extracting content from: {url}")
     try:
         res = requests.get(url, headers=HEADERS, timeout=10)
         soup = BeautifulSoup(res.text, 'html.parser')
-
         title = soup.title.string.strip() if soup.title else "News"
         paragraphs = soup.find_all('p')
         text = ' '.join([p.get_text() for p in paragraphs])
 
-        article_container = soup.find('div', class_='td-post-content') or \
-                            soup.find('article') or \
-                            soup.find('div', class_='entry-content')
-        image_url = ''
-        if article_container:
-            image_tag = article_container.find('img')
-            if image_tag and 'src' in image_tag.attrs:
-                image_url = image_tag['src']
+        container = soup.find('div', class_='td-post-content') or soup.find('article') or soup.find('div', class_='entry-content')
+        image_url = ""
+        if container:
+            img_tag = container.find('img')
+            if img_tag and 'src' in img_tag.attrs:
+                image_url = img_tag['src']
 
         return title, text, image_url
     except Exception as e:
         print("❌ Extract failed:", e)
         return "", "", ""
+
 
 def rewrite_content(title, content):
     print(f"🧠 Rewriting with Gemini: {title[:30]}...")
@@ -141,29 +161,31 @@ Summary: <your 400-character summary here>
         print("❌ Gemini Error:", e)
         return title, ""
 
+
 def upload_image_to_imgbb(image_path):
     try:
-        print("📄 Uploading image to imgbb...")
+        print("📤 Uploading image to imgbb...")
         api_key = os.getenv("IMGBB_API_KEY")
         if not api_key:
-            print("⚠️ IMGBB API key is not set.")
-            return None
-        if not os.path.exists(image_path):
-            print("⚠️ Image file not found:", image_path)
+            print("⚠️ IMGBB_API_KEY is not set.")
             return None
         with open(image_path, "rb") as f:
             res = requests.post("https://api.imgbb.com/1/upload", data={"key": api_key}, files={"image": f})
             data = res.json()
-            return data["data"]["url"] if "data" in data and "url" in data["data"] else None
+            if "data" in data and "url" in data["data"]:
+                return data["data"]["url"]
+        return None
     except Exception as e:
         print("❌ Image upload failed:", e)
         return None
+
 
 def upload_to_blogger(title, content, image_path):
     print("📰 Uploading to Blogger...")
     try:
         blogger = get_blogger_service()
-        blog_id = os.environ["BLOGGER_BLOG_ID"]
+        blogs = blogger.blogs().listByUser(userId='self').execute()
+        blog_id = blogs['items'][0]['id']
 
         image_url = upload_image_to_imgbb(image_path) if image_path else None
 
@@ -183,6 +205,7 @@ def upload_to_blogger(title, content, image_path):
     except HttpError as err:
         print(f"❌ Blogger error: {err}")
 
+
 def main():
     websites = ["https://www.kannadanewsnow.com", "https://www.kannadadunia.com"]
     for site in websites:
@@ -190,6 +213,12 @@ def main():
         articles = fetch_articles(site)
         for link in articles:
             title, full_content, img_url = extract_article_content(link)
+            content_hash = hash_text(full_content)
+
+            if content_hash in posted_hashes:
+                print("⚠️ Duplicate post skipped.")
+                continue
+
             if len(full_content.strip()) < 50:
                 print("⚠️ Skipped short content.")
                 continue
@@ -201,8 +230,10 @@ def main():
 
             img_cleaned = remove_watermark_from_url(img_url) if img_url else None
             upload_to_blogger(short_title, short_news, img_cleaned)
+            posted_hashes.add(content_hash)
 
     print("✅ Script finished!")
+
 
 if __name__ == "__main__":
     main()
