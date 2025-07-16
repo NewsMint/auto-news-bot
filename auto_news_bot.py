@@ -1,22 +1,19 @@
 print("✅ Script started running with Google Gemini")
 
 import os
-from dotenv import load_dotenv
-load_dotenv()
-
 import requests
 import html
 import cv2
 import numpy as np
-import pickle
 from bs4 import BeautifulSoup
 from PIL import Image
 from io import BytesIO
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
-from google.auth.transport.requests import Request
-from google_auth_oauthlib.flow import InstalledAppFlow
+from google.oauth2.credentials import Credentials
 import google.generativeai as genai
+
+HEADERS = {'User-Agent': 'Mozilla/5.0'}
 
 # ✅ Load Gemini API Key
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
@@ -26,28 +23,17 @@ if not GEMINI_API_KEY:
 
 genai.configure(api_key=GEMINI_API_KEY)
 
-HEADERS = {
-    'User-Agent': 'Mozilla/5.0'
-}
-
+# ✅ Get Blogger service using OAuth2 credentials from GitHub secrets
 def get_blogger_service():
-    creds = None
-    if os.path.exists('token.pickle'):
-        with open('token.pickle', 'rb') as token:
-            creds = pickle.load(token)
-
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            flow = InstalledAppFlow.from_client_secrets_file(
-                'client_secret.json', ['https://www.googleapis.com/auth/blogger']
-            )
-            creds = flow.run_local_server(port=0)
-        with open('token.pickle', 'wb') as token:
-            pickle.dump(creds, token)
-
-    return build('blogger', 'v3', credentials=creds)
+    creds = Credentials.from_authorized_user_info(
+        info={
+            "client_id": os.environ["BLOGGER_CLIENT_ID"],
+            "client_secret": os.environ["BLOGGER_CLIENT_SECRET"],
+            "refresh_token": os.environ["BLOGGER_REFRESH_TOKEN"],
+            "token_uri": "https://oauth2.googleapis.com/token"
+        }
+    )
+    return build("blogger", "v3", credentials=creds)
 
 def remove_watermark_from_url(image_url):
     try:
@@ -74,20 +60,16 @@ def fetch_articles(url, limit=5):
         articles = []
 
         if "kannadanewsnow.com" in url:
-            # 🎯 For kannadanewsnow.com
             links = soup.select("div.jeg_postblock_content a")
-            for link in links:
-                href = link.get("href")
-                if href and href.startswith("http") and href not in articles:
-                    articles.append(href)
-
         elif "kannadadunia.com" in url:
-            # 🎯 For kannadadunia.com
             links = soup.select("h2.entry-title a")
-            for link in links:
-                href = link.get("href")
-                if href and href.startswith("http") and href not in articles:
-                    articles.append(href)
+        else:
+            links = []
+
+        for link in links:
+            href = link.get("href")
+            if href and href.startswith("http") and href not in articles:
+                articles.append(href)
 
         print(f"✅ Found {len(articles)} article(s)")
         return articles[:limit]
@@ -100,19 +82,15 @@ def extract_article_content(url):
     try:
         res = requests.get(url, headers=HEADERS, timeout=10)
         soup = BeautifulSoup(res.text, 'html.parser')
-        
-        # Extract title
-        title = soup.title.string.strip() if soup.title else "News"
 
-        # Extract article text
+        title = soup.title.string.strip() if soup.title else "News"
         paragraphs = soup.find_all('p')
         text = ' '.join([p.get_text() for p in paragraphs])
 
-        # ✅ Try to get image inside the post content
-        # Find <div> or <article> that contains the news
-        article_container = soup.find('div', class_='td-post-content') or soup.find('article') or soup.find('div', class_='entry-content')
+        article_container = soup.find('div', class_='td-post-content') or \
+                            soup.find('article') or \
+                            soup.find('div', class_='entry-content')
         image_url = ''
-
         if article_container:
             image_tag = article_container.find('img')
             if image_tag and 'src' in image_tag.attrs:
@@ -139,7 +117,6 @@ Format your response like this exactly:
 Title: <your short title here>
 Summary: <your 400-character summary here>
 """
-
     try:
         model = genai.GenerativeModel("models/gemini-1.5-flash")
         response = model.generate_content(prompt)
@@ -156,7 +133,7 @@ Summary: <your 400-character summary here>
 
         if not short_title or not short_summary:
             print("⚠️ Gemini output missing required parts.")
-            return title, ""  # fallback
+            return title, ""
 
         print("✅ Gemini rewrite successful")
         return short_title, short_summary
@@ -177,11 +154,7 @@ def upload_image_to_imgbb(image_path):
         with open(image_path, "rb") as f:
             res = requests.post("https://api.imgbb.com/1/upload", data={"key": api_key}, files={"image": f})
             data = res.json()
-            if "data" in data and "url" in data["data"]:
-                return data["data"]["url"]
-            else:
-                print("⚠️ imgbb response missing 'data.url'")
-                return None
+            return data["data"]["url"] if "data" in data and "url" in data["data"] else None
     except Exception as e:
         print("❌ Image upload failed:", e)
         return None
@@ -190,12 +163,9 @@ def upload_to_blogger(title, content, image_path):
     print("📰 Uploading to Blogger...")
     try:
         blogger = get_blogger_service()
-        blogs = blogger.blogs().listByUser(userId='self').execute()
-        blog_id = blogs['items'][0]['id']
+        blog_id = os.environ["BLOGGER_BLOG_ID"]
 
-        image_url = None
-        if image_path:
-            image_url = upload_image_to_imgbb(image_path)
+        image_url = upload_image_to_imgbb(image_path) if image_path else None
 
         post_content = f"<p>{html.escape(content)}</p>"
         if image_url:
