@@ -14,6 +14,7 @@ jobs:
       BLOGGER_CLIENT_SECRET: ${{ secrets.BLOGGER_CLIENT_SECRET }}
       BLOGGER_REFRESH_TOKEN: ${{ secrets.BLOGGER_REFRESH_TOKEN }}
       BLOGGER_BLOG_ID: ${{ secrets.BLOGGER_BLOG_ID }}
+      IMGBB_API_KEY: ${{ secrets.IMGBB_API_KEY }}
     steps:
       - uses: actions/checkout@v3
       - name: Set up Python
