@@ -166,17 +166,24 @@ Summary: <your 400-character summary here>
 
 def upload_image_to_imgbb(image_path):
     try:
-        print("📤 Uploading image to imgbb...")
+        print("📄 Uploading image to imgbb...")
         api_key = os.getenv("IMGBB_API_KEY")
         if not api_key:
-            print("⚠️ IMGBB_API_KEY is not set.")
+            print("⚠️ IMGBB API key is not set.")
+            return None
+        if not os.path.exists(image_path):
+            print("⚠️ Image file not found:", image_path)
             return None
         with open(image_path, "rb") as f:
             res = requests.post("https://api.imgbb.com/1/upload", data={"key": api_key}, files={"image": f})
+            res.raise_for_status()
             data = res.json()
             if "data" in data and "url" in data["data"]:
+                print("✅ Uploaded to imgbb:", data["data"]["url"])
                 return data["data"]["url"]
-        return None
+            else:
+                print("⚠️ imgbb response missing 'data.url'", data)
+                return None
     except Exception as e:
         print("❌ Image upload failed:", e)
         return None
