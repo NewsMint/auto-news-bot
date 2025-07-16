@@ -37,24 +37,26 @@ def hash_text(text):
     return hashlib.md5(text.encode()).hexdigest()
 
 
+from google.oauth2.credentials import Credentials
+
 def get_blogger_service():
-    creds = None
-    if os.path.exists('token.pickle'):
-        with open('token.pickle', 'rb') as token:
-            creds = pickle.load(token)
+    try:
+        creds = Credentials(
+            token=None,
+            refresh_token=os.getenv("BLOGGER_REFRESH_TOKEN"),
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=os.getenv("BLOGGER_CLIENT_ID"),
+            client_secret=os.getenv("BLOGGER_CLIENT_SECRET"),
+            scopes=["https://www.googleapis.com/auth/blogger"],
+        )
 
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
+        if creds.expired or not creds.valid:
             creds.refresh(Request())
-        else:
-            flow = InstalledAppFlow.from_client_secrets_file(
-                'client_secret.json', ['https://www.googleapis.com/auth/blogger']
-            )
-            creds = flow.run_local_server(port=0)
-        with open('token.pickle', 'wb') as token:
-            pickle.dump(creds, token)
 
-    return build('blogger', 'v3', credentials=creds)
+        return build('blogger', 'v3', credentials=creds)
+    except Exception as e:
+        print("❌ Failed to initialize Blogger service:", e)
+        exit(1)
 
 
 def remove_watermark_from_url(image_url):
