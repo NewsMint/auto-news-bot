@@ -1,0 +1,31 @@
+name: 🚀 NewsMint Auto Bot (every 5 minutes)
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'     # Run every 5 minutes
+  workflow_dispatch:          # Enable 'Run workflow' button
+
+jobs:
+  run-news-bot:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.11
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run the bot
+        run: python auto_news_bot.py
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          BLOGGER_API_KEY: ${{ secrets.BLOGGER_API_KEY }}
+          BLOGGER_BLOG_ID: ${{ secrets.BLOGGER_BLOG_ID }}  # ✅ Fixed key name
