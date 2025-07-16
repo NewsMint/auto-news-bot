@@ -197,6 +197,7 @@ def upload_to_blogger(title, content, image_path):
         blog_id = blogs['items'][0]['id']
 
         image_url = upload_image_to_imgbb(image_path) if image_path else None
+        print(f"🖼️ Final image URL: {image_url}")
 
         post_content = f"<p>{html.escape(content)}</p>"
         if image_url:
