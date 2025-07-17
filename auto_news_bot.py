@@ -6,6 +6,7 @@ import requests
 import html
 import cv2
 import numpy as np
+import pickle
 from bs4 import BeautifulSoup
 from PIL import Image
 from io import BytesIO
@@ -15,6 +16,17 @@ from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from dotenv import load_dotenv
 from openai import OpenAI
+
+# ✅ Functions to prevent duplicate posting
+def load_posted_urls():
+    if not os.path.exists("posted_urls.txt"):
+        return set()
+    with open("posted_urls.txt", "r", encoding="utf-8") as f:
+        return set(line.strip() for line in f.readlines())
+
+def save_posted_url(url):
+    with open("posted_urls.txt", "a", encoding="utf-8") as f:
+        f.write(url + "\n")
 
 load_dotenv()
 
@@ -30,12 +42,21 @@ HEADERS = {
     'User-Agent': 'Mozilla/5.0'
 }
 
-posted_hashes = set()
+# ✅ Load previously posted hashes
+HASH_FILE = "posted_hashes.pkl"
+if os.path.exists(HASH_FILE):
+    with open(HASH_FILE, "rb") as f:
+        posted_hashes = pickle.load(f)
+else:
+    posted_hashes = set()
 
+def save_posted_hash(hash_val):
+    posted_hashes.add(hash_val)
+    with open(HASH_FILE, "wb") as f:
+        pickle.dump(posted_hashes, f)
 
 def hash_text(text):
     return hashlib.md5(text.encode()).hexdigest()
-
 
 def get_blogger_service():
     try:
@@ -54,65 +75,73 @@ def get_blogger_service():
         print("❌ Failed to initialize Blogger service:", e)
         exit(1)
 
-
 def remove_watermark_from_url(image_url):
     try:
         print("🖼️ Downloading image to remove watermark...")
         response = requests.get(image_url)
         image_array = np.array(Image.open(BytesIO(response.content)).convert("RGB"))
         h, w, _ = image_array.shape
-
-        # ✅ Blur top-center area (where KannadaNewsNow logo is)
         center_x = w // 2
-        logo_width = 300   # Approx width of watermark
-        logo_height = 50   # Approx height of watermark
+        logo_width = 300
+        logo_height = 50
         top = 5
         bottom = top + logo_height
         left = center_x - (logo_width // 2)
         right = center_x + (logo_width // 2)
-
         if bottom <= h and right <= w and left >= 0:
             watermark_area_top_center = image_array[top:bottom, left:right]
             blurred_area = cv2.GaussianBlur(watermark_area_top_center, (25, 25), 30)
             image_array[top:bottom, left:right] = blurred_area
-
         cleaned_path = "cleaned_image.jpg"
         cv2.imwrite(cleaned_path, cv2.cvtColor(image_array, cv2.COLOR_RGB2BGR))
-        print("✅ Watermark removed from top-center")
+        print("✅ Watermark removed")
         return cleaned_path
     except Exception as e:
         print("❌ Watermark removal failed:", e)
         return None
 
-
 def fetch_articles(url):
+    print(f"🌐 Fetching articles from {url}")
     try:
-        print(f"🌐 Fetching articles from {url}")
-        res = requests.get(url, headers=HEADERS, timeout=10)
+        res = requests.get(url, headers=HEADERS, timeout=30)
+        res.raise_for_status()
+
+        domain_key = url.split("//")[1].split("/")[0].replace(".", "_")
+        with open(f"debug_{domain_key}.html", "w", encoding="utf-8") as f:
+            f.write(res.text)
+
         soup = BeautifulSoup(res.text, 'html.parser')
         articles = []
 
+        # ✅ KannadaNewsNow.com
         if "kannadanewsnow.com" in url:
-            for article in soup.select('h3.entry-title.td-module-title a'):
-                link = article['href']
-                img_tag = article.find_parent('div.td-module-thumb').find('img')
-                img_url = img_tag['src'] if img_tag else ""
-                articles.append((link, img_url))
+            links = soup.select("h3.entry-title a")
+            imgs = soup.select("div.td-module-thumb img")
 
+        # ✅ KannadaDunia.com
         elif "kannadadunia.com" in url:
-            for a in soup.select("div.td-image-container a"):
-                link = a["href"]
-                img = a.find("img")
-                img_url = img["src"] if img else ""
-                articles.append((link, img_url))
+            links = soup.select("div.td-image-container a")
+            imgs = soup.select("div.td-image-container img")
+
+        else:
+            print("⚠️ Unsupported website.")
+            return []
+
+        # Combine and clean up
+        for link, img in zip(links, imgs):
+            href = link.get("href")
+            src = img.get("src", "")
+            if href and "http" in href:
+                # Remove thumbnail sizes from image URLs
+                src = src.replace("-300x196", "").replace("-420x280", "").replace("-150x150", "")
+                articles.append((href, src))
 
         print(f"✅ Found {len(articles)} article(s)")
-        return articles[:5]
+        return articles
 
     except Exception as e:
-        print("❌ Fetch error:", e)
+        print("❌ Error fetching articles:", e)
         return []
-
 
 def extract_article_content(url):
     print(f"📄 Extracting content from: {url}")
@@ -120,75 +149,114 @@ def extract_article_content(url):
         res = requests.get(url, headers=HEADERS, timeout=30)
         soup = BeautifulSoup(res.text, 'html.parser')
 
+        # Skip video-only articles
+        if soup.find("iframe") or soup.find("video"):
+            print("⚠️ Skipping video news article.")
+            return "", "", ""
+
+        title = "News"
+        full_content = ""
+        image_url = ""
+
+        # ✅ Logic for kannadadunia.com
         if "kannadadunia.com" in url:
             title_tag = soup.find("h1", class_="s-title")
-            content_divs = soup.select("div.elementor-widget-container p")
+            container = soup.find("div", class_="post-content") or soup.find("article")
             img_tag = soup.select_one("div.featured-lightbox-trigger img")
+
+        # ✅ Logic for kannadanewsnow.com
         else:
-            title_tag = soup.title
-            content_divs = soup.find_all("p")
-            container = soup.find('div', class_='td-post-content') or soup.find('article') or soup.find('div', class_='entry-content')
+            title_tag = soup.find("title") or soup.find("h1")
+            container = (
+                soup.find("div", class_="td-post-content")
+                or soup.find("div", class_="entry-content")
+                or soup.find("article")
+            )
+            # Select first good image (skip thumbnails)
             img_tag = None
             if container:
-                for img in container.find_all('img'):
+                for img in container.find_all("img"):
                     src = img.get("src", "")
-                    if "uploads" in src and not "300x" in src and not "150x" in src:
+                    if "uploads" in src and not any(x in src for x in ["300x", "150x", "100x"]):
                         img_tag = img
                         break
 
-        title = title_tag.get_text(strip=True) if title_tag else "News"
-        text = ' '.join([p.get_text(strip=True) for p in content_divs])
-        image_url = img_tag["src"] if img_tag and img_tag.get("src") else ""
-        print(f"🖼️ Using article image: {image_url}")
-        return title, text, image_url
+        # ✅ Extract title
+        if title_tag:
+            title = title_tag.get_text(strip=True)
+
+        # ✅ Extract paragraphs
+        if container:
+            paragraphs = container.find_all("p")
+            full_content = " ".join(p.get_text(strip=True) for p in paragraphs if p.get_text(strip=True))
+
+        # ✅ Validate content
+        if len(full_content.strip()) < 50:
+            print("⚠️ Skipped short content.")
+            return title, "", image_url
+
+        # ✅ Extract image URL
+        if img_tag and img_tag.get("src"):
+            image_url = img_tag["src"]
+            print(f"🖼️ Using article image: {image_url}")
+
+        return title, full_content.strip(), image_url
+
     except Exception as e:
         print("❌ Extract failed:", e)
         return "", "", ""
 
-
 def rewrite_content(title, content):
     print(f"🧠 Rewriting with OpenAI: {title[:30]}...")
+
     prompt = f"""
 Title: {title}
 
 Content: {content}
 
-Rewrite the above Kannada news into:
+Rewrite the above Kannada news article into:
 
-1. A Kannada summary that is **at least 370 characters and no more than 400 characters**. It should cover all key points briefly.
-2. A short title in Kannada (within 6 words, no subtitles or punctuation).
+1. A **short title in Kannada** within 6 words, without punctuation or subtitles.
+2. A **summary in Kannada** between **370 to 400 characters**, covering only the news in the article clearly and professionally.
 
-Format your response like this exactly:
-Title: <your short title here>
-Summary: <your 370 to 400-character summary here>
+Do not add opinions or guess missing info.
+
+Output format:
+Title: <short title>
+Summary: <370-400 character summary>
 """
+
     try:
         response = client.chat.completions.create(
             model="gpt-3.5-turbo",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.7
+            temperature=0.7,
+            messages=[
+                {"role": "system", "content": "You are a Kannada news editor rewriting short summaries for a mobile app."},
+                {"role": "user", "content": prompt}
+            ]
         )
         reply = response.choices[0].message.content.strip()
-        lines = reply.split('\n')
+
         short_title = ""
         short_summary = ""
 
-        for line in lines:
+        # Handle both "Title:" and "title:" etc
+        for line in reply.splitlines():
             if line.lower().startswith("title:"):
                 short_title = line.split(":", 1)[1].strip()
             elif line.lower().startswith("summary:"):
                 short_summary = line.split(":", 1)[1].strip()
 
         if not short_title or not short_summary:
-            print("⚠️ OpenAI output missing required parts.")
-            return title, ""
+            print("⚠️ OpenAI output missing parts. Using fallback.")
+            return title[:50], content[:380]
 
         print("✅ OpenAI rewrite successful")
         return short_title, short_summary
+
     except Exception as e:
         print("❌ OpenAI Error:", e)
-        return title, ""
-
+        return title[:50], content[:380]
 
 def upload_image_to_imgbb(image_path):
     try:
@@ -214,80 +282,70 @@ def upload_image_to_imgbb(image_path):
         print("❌ Image upload failed:", e)
         return None
 
-
 def upload_to_blogger(title, content, image_path):
     print("📰 Uploading to Blogger...")
     try:
         blogger = get_blogger_service()
         blogs = blogger.blogs().listByUser(userId='self').execute()
         blog_id = blogs['items'][0]['id']
-
         image_url = upload_image_to_imgbb(image_path) if image_path else None
         post_content = f"<p>{html.escape(content)}</p>"
         if image_url:
             post_content = f'<img src="{image_url}" width="100%"><br>' + post_content
-
         post = {
             'kind': 'blogger#post',
             'blog': {'id': blog_id},
             'title': title,
             'content': post_content
         }
-
         blogger.posts().insert(blogId=blog_id, body=post).execute()
         print("✅ Posted to Blogger:", title)
     except HttpError as err:
         print(f"❌ Blogger error: {err}")
 
-
 def main():
+    MAX_POSTS = 5
+    post_count = 0
+    print("✅ Script started running with OpenAI GPT-3.5")
+
     websites = [
         "https://kannadanewsnow.com/kannada/",
         "https://kannadadunia.com/category/latest-news/"
     ]
 
-    def is_breaking_news_image(image_url):
-        if not image_url:
-            return False
-        return "breaking" in image_url.lower()
+    posted_urls = load_posted_urls()
 
     for site in websites:
         print(f"🔎 Processing website: {site}")
         articles = fetch_articles(site)
 
-        for link, homepage_image in articles:
-            title, full_content, img_url = extract_article_content(link)
-
-            # ✅ Use article image if available, else homepage image
-            final_img = img_url or homepage_image
-
-            # ✅ Replace breaking news image with clean hosted image
-            if is_breaking_news_image(final_img):
-                print("⚠️ Detected breaking news image. Replacing with your clean image...")
-                final_img = "https://i.ibb.co/1cZbWPH/breaking-news-clean.jpg"
-
-            # ✅ Skip if duplicate or content too short
-            content_hash = hash_text(full_content)
-            if content_hash in posted_hashes:
+        for link, img_url in articles:
+            if link in posted_urls:
                 print("⚠️ Duplicate post skipped.")
                 continue
-            if len(full_content.strip()) < 50:
+
+            title, full_content, extracted_img = extract_article_content(link)
+            if not full_content or len(full_content.strip()) < 80:
                 print("⚠️ Skipped short content.")
                 continue
 
-            # ✅ Rewrite using OpenAI
-            short_title, short_news = rewrite_content(title, full_content)
-            if not short_news.strip():
-                print("⚠️ Skipping post due to empty rewritten content.")
-                continue
+            image_url = extracted_img or img_url
 
-            # ✅ Remove watermark and post to Blogger
-            img_cleaned = remove_watermark_from_url(final_img) if final_img else None
-            upload_to_blogger(short_title, short_news, img_cleaned)
-            posted_hashes.add(content_hash)
+            short_title, short_summary = rewrite_content(title, full_content)
+
+            # Optional: Remove watermark if needed
+            # image_url = remove_watermark(image_url)
+
+            success = post_to_blogger(short_title, short_summary, image_url)
+
+            if success:
+                save_posted_url(link)
+                post_count += 1
+                if post_count >= MAX_POSTS:
+                    print("🚫 Post limit reached for this run.")
+                    return
 
     print("✅ Script finished!")
-
 
 if __name__ == "__main__":
     main()
