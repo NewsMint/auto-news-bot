@@ -217,7 +217,7 @@ def upload_to_blogger(title, content, image_path):
 
 
 def main():
-    websites = ["https://www.kannadanewsnow.com", "https://www.kannadadunia.com"]
+    websites = ["https://www.kannadanewsnow.com", "https://kannadadunia.com/category/latest-news/"]
     for site in websites:
         print(f"🔎 Processing website: {site}")
         articles = fetch_articles(site)
