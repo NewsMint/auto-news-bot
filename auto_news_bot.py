@@ -139,7 +139,7 @@ def fetch_articles(url):
                 if link:
                     articles.append((link, img_url))
 
-        print(f"✅ Found {len(articles)} article(s)")
+    print(f"✅ Found {len(articles)} article(s)")
         return articles
 
         except Exception as e:
