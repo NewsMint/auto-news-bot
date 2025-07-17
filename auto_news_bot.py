@@ -73,9 +73,12 @@ def get_blogger_service():
             client_secret=os.getenv("BLOGGER_CLIENT_SECRET"),
             scopes=["https://www.googleapis.com/auth/blogger"],
         )
+
         if creds.expired or not creds.valid:
             creds.refresh(Request())
+
         return build('blogger', 'v3', credentials=creds)
+
     except Exception as e:
         print("❌ Failed to initialize Blogger service:", e)
         exit(1)
