@@ -102,42 +102,36 @@ def remove_watermark_from_url(image_url):
 
 def fetch_articles(url):
     print(f"🌐 Fetching articles from {url}")
-    try:
-        res = requests.get(url, headers=HEADERS, timeout=30)
-        res.raise_for_status()
+    headers = {
+        "User-Agent": "Mozilla/5.0"
+    }
+    response = requests.get(url, headers=headers)
+    soup = BeautifulSoup(response.text, 'html.parser')
 
-        domain_key = url.split("//")[1].split("/")[0].replace(".", "_")
-        with open(f"debug_{domain_key}.html", "w", encoding="utf-8") as f:
-            f.write(res.text)
+    articles = []
 
-        soup = BeautifulSoup(res.text, 'html.parser')
-        articles = []
+    if "kannadanewsnow.com" in url:
+        # ✅ Selector based on <article> blocks
+        blocks = soup.select("article.l-post.grid-overlay a.image-link")
+        for a in blocks:
+            link = a.get("href")
+            img = a.find("img")
+            img_url = img["src"] if img else ""
+            if link:
+                articles.append((link, img_url))
 
-        # ✅ KannadaNewsNow.com
-        if "kannadanewsnow.com" in url:
-            links = soup.select("h3.entry-title a")
-            imgs = soup.select("div.td-module-thumb img")
+    elif "kannadadunia.com" in url:
+        # ✅ Selector based on div.p-featured > a.p-flink
+        blocks = soup.select("div.p-featured a.p-flink")
+        for a in blocks:
+            link = a.get("href")
+            img = a.find("img")
+            img_url = img["src"] if img else ""
+            if link:
+                articles.append((link, img_url))
 
-        # ✅ KannadaDunia.com
-        elif "kannadadunia.com" in url:
-            links = soup.select("div.td-image-container a")
-            imgs = soup.select("div.td-image-container img")
-
-        else:
-            print("⚠️ Unsupported website.")
-            return []
-
-        # Combine and clean up
-        for link, img in zip(links, imgs):
-            href = link.get("href")
-            src = img.get("src", "")
-            if href and "http" in href:
-                # Remove thumbnail sizes from image URLs
-                src = src.replace("-300x196", "").replace("-420x280", "").replace("-150x150", "")
-                articles.append((href, src))
-
-        print(f"✅ Found {len(articles)} article(s)")
-        return articles
+    print(f"✅ Found {len(articles)} article(s)")
+    return articles
 
     except Exception as e:
         print("❌ Error fetching articles:", e)
