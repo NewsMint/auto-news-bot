@@ -9,13 +9,14 @@ jobs:
   run-bot:
     runs-on: ubuntu-latest
 
-  env:
-  OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-  GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-  IMGBB_API_KEY: ${{ secrets.IMGBB_API_KEY }}
-  BLOGGER_CLIENT_ID: ${{ secrets.BLOGGER_CLIENT_ID }}
-  BLOGGER_CLIENT_SECRET: ${{ secrets.BLOGGER_CLIENT_SECRET }}
-  BLOGGER_REFRESH_TOKEN: ${{ secrets.BLOGGER_REFRESH_TOKEN }}
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      IMGBB_API_KEY: ${{ secrets.IMGBB_API_KEY }}
+      BLOGGER_CLIENT_ID: ${{ secrets.BLOGGER_CLIENT_ID }}
+      BLOGGER_CLIENT_SECRET: ${{ secrets.BLOGGER_CLIENT_SECRET }}
+      BLOGGER_REFRESH_TOKEN: ${{ secrets.BLOGGER_REFRESH_TOKEN }}
+      BLOGGER_BLOG_ID: ${{ secrets.BLOGGER_BLOG_ID }}
 
     steps:
       - name: Checkout code
