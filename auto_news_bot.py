@@ -58,6 +58,11 @@ def save_posted_hash(hash_val):
 def hash_text(text):
     return hashlib.md5(text.encode()).hexdigest()
 
+from google.oauth2.credentials import Credentials
+from google.auth.transport.requests import Request
+from googleapiclient.discovery import build
+import os
+
 def get_blogger_service():
     try:
         creds = Credentials(
