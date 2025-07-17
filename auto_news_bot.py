@@ -128,19 +128,19 @@ def fetch_articles(url):
             if link:
                 articles.append((link, img_url))
 
-        elif "kannadadunia.com" in url:
-            try:
-                # ✅ Selector based on div.p-featured > a.p-flink
-                blocks = soup.select("div.p-featured a.p-flink")
-                for a in blocks:
-                    link = a.get("href")
-                    img = a.find("img")
-                    img_url = img["src"] if img else ""
-                    if link:
-                        articles.append((link, img_url))
+    elif "kannadadunia.com" in url:
+        try:
+            # ✅ Selector based on div.p-featured > a.p-flink
+            blocks = soup.select("div.p-featured a.p-flink")
+            for a in blocks:
+                link = a.get("href")
+                img = a.find("img")
+                img_url = img["src"] if img else ""
+                if link:
+                    articles.append((link, img_url))
 
-            print(f"✅ Found {len(articles)} article(s)")
-            return articles
+        print(f"✅ Found {len(articles)} article(s)")
+        return articles
 
         except Exception as e:
             print("❌ Error fetching articles:", e)
