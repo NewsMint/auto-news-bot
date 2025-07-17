@@ -85,7 +85,7 @@ def fetch_articles(url, limit=5):
         articles = []
 
         if "kannadanewsnow.com" in url:
-            links = soup.select("div.jeg_postblock_content a")
+            links = soup.select("h3.jeg_post_title a")  # ✅ Fixed indentation
         else:
             links = soup.select("h2.entry-title a")
 
